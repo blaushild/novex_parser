@@ -1,0 +1,20 @@
+{
+    "city_id#": "Идентификатор города (г. Барнаул)",
+    "city_id": 463573,
+    "method": "pickup",
+    "shop_id#": "Идентификатор торговой точки (ул. Попова, 64)",
+    "shop_id": 104,
+    "categories#": "нужно собрать данные о товарах внутри заданных категорий, с учётом настройки параметра categories_black_list",
+    "categories": ["/zubnye-pasty-i-opolaskivateli/"],
+    "categories_black_list#": "товары из этих категорий нужно пропустить (не собирать данные), может быть задан пустой список",
+    "categories_black_list": ["/zubnye-pasty/"],
+    "delay_range_s#": "задержка перед любым запросом к источнику в секундах",
+    "delay_range_s": [0, 1],
+    "max_retries": 3,
+    "backoff_factor": 0.5,
+    "headers": {},
+    "restart": {
+   	 "restart_count": 20,
+   	 "restart_interval_min": 1
+    }
+}
