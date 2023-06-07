@@ -122,8 +122,11 @@ def get_time_to_sleep(time_range: Union[list, int]) -> int:
     if isinstance(time_range, list):
         min_seconds, max_seconds = time_range
         return random.randint(min_seconds, max_seconds)
-    else:
-        return 0
+    elif isinstance(time_range, int):
+        return time_range
+    raise TypeError(
+        f"time_range must be list of 2 elements or int. {type(time_range)}"
+    )
 
 
 def sleep_between_requests(time_range: Union[list, int]) -> None:

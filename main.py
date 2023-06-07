@@ -225,12 +225,6 @@ class Parser:
         """
 
         for category in self.categories_to_parse:
-            # if category["slug"] in self.config["categories_black_list"]:
-            #     logger.info(
-            #         f"Category '{category['slug']}' scipped according to black list."
-            #     )
-            #     continue
-
             logger.info(f"Getting products for '{category['slug']}'")
 
             page = 0
@@ -259,8 +253,6 @@ class Parser:
 
                 if response["pagination"]["page"] == response["pagination"]["pages"]:
                     break
-
-        return
 
     def get_product_info(self, product: json) -> json:
         """Получает инфу о продукте"""
@@ -293,9 +285,7 @@ class Parser:
                 logger.debug(f"Country '{product['country']}' has been added to product.")
                 break
         
-        self.lock.acquire()
         self.processed_products.append(product)
-        self.lock.release()
 
     def enrich_products(self, products) -> None:
         """Обогощает данные продуктов."""
