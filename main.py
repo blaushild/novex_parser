@@ -1,3 +1,4 @@
+import threading
 import json
 
 import requests
@@ -22,13 +23,15 @@ CATALOG_URL = BASE_URL + "api/catalog/"
 CATEGORIES_ENDPOINT = CATALOG_URL + "categories"
 PRODUCTS_ENDPOINT = CATALOG_URL + "products"
 PARAMS = {"withChildren": "true"}
-REQUEST_TIMEOUT = 5
+REQUEST_TIMEOUT = 60
 
 RESULT_DIR = "results/"
 STRUCTURE_FILE = RESULT_DIR + "categories.csv"
 CATEGORIES_TO_PARSE = RESULT_DIR + "categories_to_parse.csv"
 PRODUCTS_FILE = RESULT_DIR + "products.csv"
-PRODUCTS_LIMIT = 2000
+PRODUCTS_LIMIT = 100
+
+MAX_THREADS = 100
 
 
 class Parser:
@@ -46,7 +49,12 @@ class Parser:
         self.products = []  # спаршенные продукты
         # почищенные от продуктов, входящих в категории в black_list
         self.filtered_products = []
+        self.processed_products = []
         self.data_to_save = []  # данные, подготовленные для сохранения в CSV
+
+        self.max_threads = MAX_THREADS
+        self.lock = threading.Lock()
+        self.threads = []
 
     def __get_settings_from_config(self) -> json:
         """получает настройки из конфигурационного файла в JSON"""
@@ -77,12 +85,17 @@ class Parser:
     @request_repeater
     def __get_json(self, url: str) -> json:
         """получает ответ от источника данных в JSON"""
-        response = requests.get(
-            url=url, headers=self.config["headers"], timeout=REQUEST_TIMEOUT
-        )
-        response.raise_for_status()
+        try:
+            response = requests.get(
+                url=url, headers=self.config["headers"], timeout=REQUEST_TIMEOUT
+            )
+            response.raise_for_status()
 
-        return response.json()
+            return response.json()
+        
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error making request to {url}: {e}")
+            raise
 
     def __filter_category(self, category: json) -> bool:
         """Фильтруем только нужные категории"""
@@ -212,11 +225,11 @@ class Parser:
         """
 
         for category in self.categories_to_parse:
-            if category["slug"] in self.config["categories_black_list"]:
-                logger.info(
-                    f"Category '{category['slug']}' scipped according to black list."
-                )
-                continue
+            # if category["slug"] in self.config["categories_black_list"]:
+            #     logger.info(
+            #         f"Category '{category['slug']}' scipped according to black list."
+            #     )
+            #     continue
 
             logger.info(f"Getting products for '{category['slug']}'")
 
@@ -279,7 +292,10 @@ class Parser:
                 product["country"] = characteristic["value"]
                 logger.debug(f"Country '{product['country']}' has been added to product.")
                 break
-        return
+        
+        self.lock.acquire()
+        self.processed_products.append(product)
+        self.lock.release()
 
     def enrich_products(self, products) -> None:
         """Обогощает данные продуктов."""
@@ -354,6 +370,26 @@ class Parser:
 
         return
 
+    def process_thread(self):
+        while True:
+            self.lock.acquire()
+            if not self.filtered_products:
+                self.lock.release()
+                break
+            product = self.filtered_products.pop(0)
+            self.lock.release()
+
+            self.enrich_product(product)
+
+    def start_processing(self):
+        for _ in range(self.max_threads):
+            thread = threading.Thread(target=self.process_thread)
+            thread.start()
+            self.threads.append(thread)
+
+        for thread in self.threads:
+            thread.join()
+
     @restarter
     def run(self) -> None:
         """Запускает полный цикл парсинга."""
@@ -375,9 +411,14 @@ class Parser:
 
         self.get_products()
         self.__filter_products(self.products)
-        self.enrich_products(self.filtered_products)
 
-        self.prepare_products_to_csv(self.filtered_products)
+        self.start_processing()
+        # if self.config["delay_range_s"] == 0:
+        #     self.start_processing()
+        # else:
+        #     self.enrich_products(self.filtered_products)
+
+        self.prepare_products_to_csv(self.processed_products)
         self.save_to_csv(PRODUCTS_FILE)
 
         logger.info("Parsing successfully finished.")

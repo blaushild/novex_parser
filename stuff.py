@@ -9,7 +9,7 @@ import os
 
 from time import time, sleep
 
-from typing import Any
+from typing import Any, Union
 
 
 logging.config.fileConfig("logging.conf")
@@ -59,7 +59,6 @@ def request_repeater(func: Any) -> Any:
 
             try:
                 result = func(obj, *args, **kwargs)
-                logger.info("Success.\n")
                 return result
             except Exception as e:
                 logger.error(f"Exception in: {func.__name__}: {e}")
@@ -118,14 +117,16 @@ def prepare_row(row=list) -> list:
     return [prepare_string(el) if isinstance(el, str) else el for el in row]
 
 
-def get_time_to_sleep(time_range: list) -> int:
+def get_time_to_sleep(time_range: Union[list, int]) -> int:
     """Выбирает время сна перед очередным запросом"""
-    min_seconds, max_seconds = time_range
+    if isinstance(time_range, list):
+        min_seconds, max_seconds = time_range
+        return random.randint(min_seconds, max_seconds)
+    else:
+        return 0
 
-    return random.randint(min_seconds, max_seconds)
 
-
-def sleep_between_requests(time_range: list) -> None:
+def sleep_between_requests(time_range: Union[list, int]) -> None:
     """Делает паузу между запросами"""
     if time_range == 0:
         return
@@ -138,11 +139,9 @@ def sleep_between_requests(time_range: list) -> None:
     logger.info(f"Sleep {time_to_sleep} seconds.")
     sleep(time_to_sleep)
 
-    return
 
 def create_dirs(directories: list) -> None:
     for directory in directories:
         if not os.path.exists(directory):
             os.makedirs(directory)
             logger.info(f"Directory '{directory}' has been created.")
-    return
