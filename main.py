@@ -1,37 +1,36 @@
 import threading
 import json
-
 import requests
-
 import csv
-
 from datetime import datetime
+from typing import Callable
+
+from handlers import build_sku_category
+from handlers import prepare_row
 
 from stuff import (
     logger,
     timer,
     request_repeater,
-    prepare_row,
     restarter,
-    create_dirs,
+    create_directories,
 )
 
+# директории используемые парсером
+RESULT_DIR = "results/"
 
 CONFIG_FILE = "config.json"
+
+# endpoints and urls
 BASE_URL = "https://novex.ru/"
 CATALOG_URL = BASE_URL + "api/catalog/"
 CATEGORIES_ENDPOINT = CATALOG_URL + "categories"
 PRODUCTS_ENDPOINT = CATALOG_URL + "products"
-PARAMS = {"withChildren": "true"}
-REQUEST_TIMEOUT = 60
 
-RESULT_DIR = "results/"
+# файлы для сохранения результатов
 STRUCTURE_FILE = RESULT_DIR + "categories.csv"
 CATEGORIES_TO_PARSE = RESULT_DIR + "categories_to_parse.csv"
 PRODUCTS_FILE = RESULT_DIR + "products.csv"
-PRODUCTS_LIMIT = 100
-
-MAX_THREADS = 100
 
 
 class Parser:
@@ -45,107 +44,250 @@ class Parser:
         ]
 
         self.all_categories = []  # Все категории и подкатегории
-        self.categories_to_parse = []  # список всех slug категорий для парсинга
+        # список всех slug категорий для парсинга
+        self.categories_to_parse = []
         self.products = []  # спаршенные продукты
         # почищенные от продуктов, входящих в категории в black_list
         self.filtered_products = []
         self.processed_products = []
         self.data_to_save = []  # данные, подготовленные для сохранения в CSV
 
-        self.max_threads = MAX_THREADS
+        self.max_threads = self.config["max_threads"]
         self.lock = threading.Lock()
         self.threads = []
 
-    def __get_settings_from_config(self) -> json:
-        """получает настройки из конфигурационного файла в JSON"""
+    def __get_settings_from_config(self) -> dict:
+        """Получает настройки из конфигурационного файла"""
         try:
             with open(CONFIG_FILE, "r") as file:
                 return json.load(file)
         except (FileNotFoundError, json.JSONDecodeError) as e:
-            logger.error(f"Error reading config file '{CONFIG_FILE}': {str(e)}")
+            logger.error(
+                f"Error reading config file '{CONFIG_FILE}': {str(e)}"
+            )
             raise
 
-    def _create_url_categories(self) -> str:
-        """создаёт url для получения категорий с учётом заданных параметров"""
-        params = [f"{key}={value}" for key, value in PARAMS.items()]
-        url = CATEGORIES_ENDPOINT + "?" + "&".join(params)
-
-        return url
-
-    def get_categories(self) -> None:
-        """Получает все категории и все подкатегории"""
-        logger.info("Getting all categories and subcategories.")
-        url = self._create_url_categories()
-        response = requests.get(url=url, headers=self.config["headers"])
-        response.raise_for_status()
-        self.all_categories = response.json()
-
-        return
-
     @request_repeater
-    def __get_json(self, url: str) -> json:
-        """получает ответ от источника данных в JSON"""
+    def fetch_json_data(self, url: str) -> dict:
+        """Получает данные из источника"""
         try:
             response = requests.get(
-                url=url, headers=self.config["headers"], timeout=REQUEST_TIMEOUT
+                url=url,
+                headers=self.config["headers"],
+                timeout=self.config["request_timeout"],
             )
             response.raise_for_status()
 
             return response.json()
-        
+
         except requests.exceptions.RequestException as e:
             logger.error(f"Error making request to {url}: {e}")
             raise
 
-    def __filter_category(self, category: json) -> bool:
+    def _get_categories(self) -> None:
+        """Получает все категории и все подкатегории"""
+        logger.info("Getting all categories and subcategories.")
+
+        url = CATEGORIES_ENDPOINT + "?withChildren=true"
+        response = requests.get(url=url, headers=self.config["headers"])
+        response.raise_for_status()
+
+        self.all_categories = response.json()
+
+    def _filter_category(self, category: dict) -> bool:
         """Фильтруем только нужные категории"""
         if category["slug"] in self.config["categories"]:
             self.categories_to_parse.append(category)
             return True
 
-    def __build_sku_category(self, product: json) -> str:
-        """Создаёт sku_category - Название категории товара в каталоге.
-        По иерархии сверху вниз, от родительских категорий к дочерним.
-        Например: ”Для животных|Корма для животных|Корма для кошек”."""
-
-        sku_category = product["categories"][0]["title"]
-        if "parent" in product["categories"][0]:
-            parent = product["categories"][0]["parent"]
-            while True:
-                sku_category = parent["title"] + "|" + sku_category
-                if not parent["parent"]:
-                    return sku_category
-
-                parent = parent["parent"]
-
-    def parse_category(self, category: json) -> None:
-        """Проход по категории рекурсивно в случае прохода фильтра добавляет в список категорий для парсинга"""
+    def _parse_category(self, category: dict) -> None:
+        """Проход по категории рекурсивно в случае прохода фильтра добавляет
+        в список категорий для парсинга
+        """
         if not self.config["categories"]:
             self.categories_to_parse.append(category)
             return
 
-        if self.__filter_category(category):
+        if self._filter_category(category):
             return
 
         if "children" in category:
             for child in category["children"]:
-                self.parse_category(child)
+                self._parse_category(child)
 
-        return
-
-    def bypass_categories(self) -> None:
+    def _bypass_categories(self) -> None:
         """Обходит все корневые категории"""
         for category in self.all_categories:
-            self.parse_category(category)
+            self._parse_category(category)
 
-    def create_categories_for_csv(
+    def filter_product(self, product: dict) -> bool:
+        """рекурсивный обход всех предков товара(категорий).
+        если один из предков в blacklist,
+        то товар не попадает в filtered_products
+        """
+        if "categories" in product and any(
+            category["slug"] in self.config["categories_black_list"]
+            for category in product["categories"]
+        ):
+            return True
+
+        if "categories" in product:
+            return self.filter_product(product["categories"][0]["parent"])
+
+        if "slug" in product:
+            logger.debug(f"{product['slug']=}")
+
+        if (
+            "slug" in product
+            and product["slug"] in self.config["categories_black_list"]
+        ):
+            logger.debug(f"Catched {product['slug']=}")
+            return True
+
+        if "parent" in product and product["parent"]:
+            return self.filter_product(product["parent"])
+
+        return False
+
+    def _filter_products(self) -> None:
+        """Чистим от продуктов, находящихся в категориях из
+        categories_black_list
+        """
+        for product in self.products:
+            is_blacklisted = self.filter_product(product)
+            logger.debug(f"{is_blacklisted=}")
+            if is_blacklisted:
+                logger.debug(f"Black listed: {product['slug']}")
+            else:
+                self.filtered_products.append(product)
+                logger.debug(f"Added to filtered_products: {product['slug']}")
+
+    def get_product_info(self, product: dict) -> dict:
+        """Получает инфу о продукте"""
+        url = (
+            PRODUCTS_ENDPOINT
+            + "/"
+            + product["slug"]
+            + "?"
+            + f"deliveryType={self.config['method']}"
+            + f"&shopIds[]={self.config['shop_id']}"
+        )
+
+        return self.fetch_json_data(url)
+
+    def _get_products_thread(self) -> None:
+        """
+        Получаем продукты из категорий categories.
+        Для многопоточности.
+
+        https://novex.ru/api/catalog/products?categoryIdOrSlug=dlya-krasoty&contextCityId=463573&deliveryType=pickup&shopIds[]=104&page=1&limit=100
+
+        без параметра limit выдаётся 50 товаров
+        ограничений на limit не видел, но увеличивается вероятность
+        "кривого" json.
+        без параметра page выдаются только товары
+
+        с параметром page выдаёт два ключа:
+        items -- здесь товары
+        pagination : {
+            page : int,
+            pages : int,
+            total : int, # items in this category
+        }
+        """
+
+        while True:
+            self.lock.acquire()
+            if not self.categories_to_parse:
+                self.lock.release()
+                break
+
+            category = self.categories_to_parse.pop(0)
+            self.lock.release()
+
+            logger.info(f"Getting products for '{category['slug']}'")
+
+            page = 0
+            while True:
+                page += 1
+
+                logger.info(
+                    f"Request #{page} for {self.config['products_limit']} "
+                    + f"products from {category['slug']}."
+                )
+
+                url = (
+                    f"{PRODUCTS_ENDPOINT}?"
+                    + f"categoryIdOrSlug={category['slug']}"
+                    + f"&contextCityId={self.config['city_id']}"
+                    + f"&deliveryType={self.config['method']}"
+                    + f"&shopIds[]={self.config['shop_id']}"
+                    + f"&page={page}"
+                    + f"&limit={self.config['products_limit']}"
+                )
+                logger.debug(f"{url=}")
+                response = self.fetch_json_data(url)
+
+                self.products.extend(response["items"])
+
+                if page == 1:
+                    logger.info(
+                        f"Total items: {response['pagination']['total']}"
+                    )
+                    logger.info(
+                        f"Total pages: {response['pagination']['pages']}"
+                    )
+
+                if (
+                    response["pagination"]["page"]
+                    == response["pagination"]["pages"]
+                ):
+                    break
+
+    def _enrich_product(self, product: dict) -> None:
+        """Обогощает данные о продукте.
+        В данном случае добавляется только страна производства товара.
+        """
+        product["country"] = None
+
+        response = self.get_product_info(product)
+        if "characteristics" not in response:
+            logger.warning(f"characteristics not found for {product['slug']}")
+            return
+
+        for characteristic in response["characteristics"]:
+            if characteristic["productProp"]["code"] == "country":
+                product["country"] = characteristic["value"]
+                logger.info(
+                    f"Product '{product['slug']}' has been updated. "
+                    + f"Added country: '{product['country']}'."
+                )
+                break
+
+        self.processed_products.append(product)
+
+    def _enrich_products_thread(self) -> None:
+        """Отдельный поток обогощения данных о продукте"""
+        while True:
+            self.lock.acquire()
+            if not self.filtered_products:
+                self.lock.release()
+                break
+            product = self.filtered_products.pop(0)
+            self.lock.release()
+
+            self._enrich_product(product)
+
+    def _create_categories_for_csv(
         self, categories: list, respect_black_list: bool = True
     ) -> None:
         """Подготавливает данные для заданных категорий перед записью в файл.
         рекурсивно обходит все подкатегории.
         """
         if not self.data_to_save:
-            self.data_to_save.append(["original_id", "title", "id", "parent_id"])
+            self.data_to_save.append(
+                ["original_id", "title", "id", "parent_id"]
+            )
 
         for category in categories:
             if (
@@ -168,143 +310,23 @@ class Parser:
             self.data_to_save.append(row)
 
             if "children" in category:
-                data = self.create_categories_for_csv(category["children"])
+                data = self._create_categories_for_csv(category["children"])
                 if data:
                     self.data_to_save.append(data)
 
-        return
-
-    def save_to_csv(self, filename: str, data: list[list] = None) -> None:
-        """Сохраняет данные, либо хранящиеся в self.data_to_save в формате CSV в файл"""
-        logger.info(f"Saving data to '{filename}'.")
-        if not data:
-            data = self.data_to_save
-
-        with open(filename, "w", newline="") as file:
-            writer = csv.writer(file, delimiter=";")
-            writer.writerows(self.data_to_save)
-
-        return
-
-    def __filter_products(self, products: list) -> None:
-        """Чистим от продуктов, находящихся в категориях categories_black_list"""
-        for product in products:
-            if "categories" in product and any(
-                category["slug"] in self.config["categories_black_list"]
-                for category in product["categories"]
-            ):
-                logger.debug(f"Black listed: {product['slug']}")
-                continue
-
-            self.filtered_products.append(product)
-            logger.debug(f"Added to filtered_products {product['slug']}")
-
-        return
-
-    def get_products(self) -> None:
-        """
-        Получаем продукты из категорий categories.
-
-        https://novex.ru/api/catalog/products?page=1&categoryIdOrSlug=sredstva-gigieny&contextCityId=463573&limit=2000
-
-        https://novex.ru/api/catalog/products?categoryIdOrSlug=sredstva-gigieny&contextCityId=463573&deliveryType=pickup&shopIds[]=104&page=1&limit=10000
-
-        https://novex.ru/api/catalog/products?categoryIdOrSlug=dlya-krasoty&contextCityId=463573&deliveryType=pickup&shopIds[]=104&page=1&limit=100
-
-        без параметра limit выдаётся 50 товаров
-        ограничений на limit не видел, но увеличивается вероятность "кривого" json
-        без параметра page выдаются только товары
-
-        с параметром page выдаёт два ключа:
-        items -- здесь товары
-        pagination : {
-            page : int,
-            pages : int,
-            total : int, # items in this category
-        }
-        """
-
-        for category in self.categories_to_parse:
-            logger.info(f"Getting products for '{category['slug']}'")
-
-            page = 0
-            while True:
-                page += 1
-
-                logger.info(f"Request #{page} for {PRODUCTS_LIMIT} products.")
-
-                url = (
-                    f"{PRODUCTS_ENDPOINT}?"
-                    + f"categoryIdOrSlug={category['slug']}"
-                    + f"&contextCityId={self.config['city_id']}"
-                    + f"&deliveryType={self.config['method']}"
-                    + f"&shopIds[]={self.config['shop_id']}"
-                    + f"&page={page}"
-                    + f"&limit={PRODUCTS_LIMIT}"
-                )
-                logger.debug(f"{url=}")
-                response = self.__get_json(url)
-
-                self.products.extend(response["items"])
-
-                if page == 1:
-                    logger.info(f"Total items: {response['pagination']['total']}")
-                    logger.info(f"Total pages: {response['pagination']['pages']}")
-
-                if response["pagination"]["page"] == response["pagination"]["pages"]:
-                    break
-
-    def get_product_info(self, product: json) -> json:
-        """Получает инфу о продукте"""
-        url = (
-            PRODUCTS_ENDPOINT
-            + "/"
-            + product["slug"]
-            + "?"
-            + f"deliveryType={self.config['method']}"
-            + f"&shopIds[]={self.config['shop_id']}"
-        )
-        logger.debug(f"{url=}")
-
-        return self.__get_json(url)
-
-    def enrich_product(self, product: json) -> None:
-        """Обогощает данные о продукте.
-        В данном случае добавляется только страна производства товара.
-        """
-        product["country"] = None
-
-        response = self.get_product_info(product)
-        if not "characteristics" in response:
-            logger.warning(f"characteristics not found for {product['slug']}")
-            return
-
-        for characteristic in response["characteristics"]:
-            if characteristic["productProp"]["code"] == "country":
-                product["country"] = characteristic["value"]
-                logger.debug(f"Country '{product['country']}' has been added to product.")
-                break
-        
-        self.processed_products.append(product)
-
-    def enrich_products(self, products) -> None:
-        """Обогощает данные продуктов."""
-        logger.info(f"Start to enrich {len(products)} products data.")
-        for i, product in enumerate(products, 1):
-            logger.info(f"Enreaching product({i}/{len(products)}): {product['slug']}")
-            self.enrich_product(product)
-
-        return True
-
-    def __prepare_product_to_csv(self, product: list) -> list:
+    def prepare_product_for_csv(self, product: list) -> list:
         """подготавливает данные о товаре для сохранения в CSV"""
-        sku_category = self.__build_sku_category(product)
+        sku_category = build_sku_category(product)
         product_url = "https://novex.ru/catalog/product/" + product["slug"]
 
         try:
-            product_image_link = "https://novex.ru" + product["gallery"][0]["file"]["url"]
+            product_image_link = (
+                "https://novex.ru" + product["gallery"][0]["file"]["url"]
+            )
         except (TypeError, IndexError) as e:
-            logger.warning(f"{product['slug']} Image isn't presented. Error: {e}")
+            logger.warning(
+                f"{product['slug']} Image isn't presented. Error: {e}"
+            )
 
             product_image_link = None
 
@@ -326,7 +348,7 @@ class Parser:
             product["sku"],
             product["title"],
             sku_category,
-            product["tradeMark"],
+            product["tradeMark"] if product["tradeMark"] else None,
             sku_country,
             product_url,
             product_image_link,
@@ -335,16 +357,18 @@ class Parser:
 
         return product
 
-    def prepare_products_to_csv(self, products: list[list]) -> None:
+    def _prepare_products_for_csv(self, products: list[list]) -> None:
         """подготавливает данные о товарах для сохранения в CSV"""
         self.data_to_save = [
             [
-                "price_datetime",  # Тип данных - текст. Формат: “2023-06-01 08:17:33”
-                "price",  # Регулярная цена. число, 2 десятичных знака. Пример: 134.99
-                "price_promo",  # Акционная цена. число, 2 десятичных знака. Пример: 99.99
-                "sku_status",  # наличие товара. 1 - в наличии. 0 - не в наличии. число.
+                # Тип данных - текст. Формат: “2023-06-01 08:17:33”
+                "price_datetime",
+                # Регулярная цена. число, 2 десятичных знака. Пример: 134.99
+                "price",
+                "price_promo",  # Акционная цена. число, 2 десятичных знака.
+                "sku_status",  # наличие товара. 1(0) - (не) в наличии. число.
                 "sku_instock",  # остаток товара в выбранной торговой точке
-                "sku_article",  # Артикул товара. Тип данных - текст. Пример: 4100242804
+                "sku_article",  # Артикул товара. текст. Пример: 4100242804
                 "sku_name",  # Наименование товара.
                 "sku_category",
                 "sku_brand",
@@ -355,25 +379,28 @@ class Parser:
         ]
 
         for product in products:
-            prepared_product = self.__prepare_product_to_csv(product)
+            prepared_product = self.prepare_product_for_csv(product)
             self.data_to_save.append(prepared_product)
 
         return
 
-    def process_thread(self):
-        while True:
-            self.lock.acquire()
-            if not self.filtered_products:
-                self.lock.release()
-                break
-            product = self.filtered_products.pop(0)
-            self.lock.release()
+    def _save_to_csv(self, filename: str) -> None:
+        """Сохраняет данные, хранящиеся в self.data_to_save в формате CSV
+        в файл
+        """
+        logger.info(f"Saving data to '{filename}'.")
 
-            self.enrich_product(product)
+        with open(filename, "w", newline="") as file:
+            writer = csv.writer(file, delimiter=";")
+            writer.writerows(self.data_to_save)
 
-    def start_processing(self):
+    def start_multithreading(self, func: Callable) -> None:
+        """Запускает функцию в многопоточном режиме.
+        Функция должна иметь обеспечение синхронизации
+        доступа к общим ресурсам.
+        """
         for _ in range(self.max_threads):
-            thread = threading.Thread(target=self.process_thread)
+            thread = threading.Thread(target=func)
             thread.start()
             self.threads.append(thread)
 
@@ -384,34 +411,46 @@ class Parser:
     def run(self) -> None:
         """Запускает полный цикл парсинга."""
 
-        dirs = [RESULT_DIR, ]
-        create_dirs(dirs)
+        create_directories([RESULT_DIR, ])
 
         logger.info("Parsing started.")
 
-        self.get_categories()
-        self.bypass_categories()
+        self._get_categories()  # получает все каталоги и подкаталоги, 1 запрос
 
-        self.create_categories_for_csv(self.all_categories, respect_black_list=False)
-        self.save_to_csv(STRUCTURE_FILE)
+        # обход полученного дерева категорий для получения категорий,
+        # которые будут парситься.
+        # сделано на случай категории в целях парсинга в конфиге и
+        # отсутствия в источнике
+        self._bypass_categories()
+
+        self._create_categories_for_csv(
+            self.all_categories, respect_black_list=False
+        )
+        self._save_to_csv(STRUCTURE_FILE)  # сохраняет полный список категорий
         self.data_to_save = []
 
-        self.create_categories_for_csv(self.categories_to_parse)
-        self.save_to_csv(CATEGORIES_TO_PARSE)
+        self._create_categories_for_csv(self.categories_to_parse)
+        # сохраняет категории для, категории,
+        # продукты из которых будут в результатах
+        self._save_to_csv(CATEGORIES_TO_PARSE)
 
-        self.get_products()
-        self.__filter_products(self.products)
+        logger.info("Products mining is starting.")
+        self.start_multithreading(self._get_products_thread)
 
-        self.start_processing()
-        # if self.config["delay_range_s"] == 0:
-        #     self.start_processing()
-        # else:
-        #     self.enrich_products(self.filtered_products)
+        # отфильтровываем продукты из категорий в blacklist'е
+        self._filter_products()
 
-        self.prepare_products_to_csv(self.processed_products)
-        self.save_to_csv(PRODUCTS_FILE)
+        logger.info(
+            "Products enrich is starting for "
+            + f"{len(self.filtered_products)} products."
+        )
+        self.start_multithreading(self._enrich_products_thread)
+
+        self._prepare_products_for_csv(self.processed_products)
+        self._save_to_csv(PRODUCTS_FILE)
 
         logger.info("Parsing successfully finished.")
+        logger.info(f"Parsed {len(self.data_to_save)} products.")
 
 
 @timer
