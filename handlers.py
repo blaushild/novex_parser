@@ -33,11 +33,12 @@ def prepare_string(text: str) -> str:
     escaped_text = replaced_text.replace('"', '""')
 
     # Оборачивание текстового поля в кавычки
+
     final_text = f'"{escaped_text}"'
 
     return final_text
 
 
-def prepare_row(row=list) -> list:
+def prepare_row(row: list[str]) -> list:
     """готовит строку для записи в CSV"""
     return [prepare_string(el) if isinstance(el, str) else el for el in row]
