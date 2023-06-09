@@ -13,11 +13,14 @@ from stuff import (
     timer,
     request_repeater,
     restarter,
-    create_directories,
 )
 
-# директории используемые парсером
+
 RESULT_DIR = "results/"
+# файлы для сохранения результатов
+STRUCTURE_FILE = RESULT_DIR + "categories.csv"
+CATEGORIES_TO_PARSE = RESULT_DIR + "categories_to_parse.csv"
+PRODUCTS_FILE = RESULT_DIR + "products.csv"
 
 CONFIG_FILE = "config.json"
 
@@ -26,11 +29,6 @@ BASE_URL = "https://novex.ru/"
 CATALOG_URL = BASE_URL + "api/catalog/"
 CATEGORIES_ENDPOINT = CATALOG_URL + "categories"
 PRODUCTS_ENDPOINT = CATALOG_URL + "products"
-
-# файлы для сохранения результатов
-STRUCTURE_FILE = RESULT_DIR + "categories.csv"
-CATEGORIES_TO_PARSE = RESULT_DIR + "categories_to_parse.csv"
-PRODUCTS_FILE = RESULT_DIR + "products.csv"
 
 
 class Parser:
@@ -410,8 +408,6 @@ class Parser:
     @restarter
     def run(self) -> None:
         """Запускает полный цикл парсинга."""
-
-        create_directories([RESULT_DIR, ])
 
         logger.info("Parsing started.")
 

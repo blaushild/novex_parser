@@ -1,0 +1,8 @@
+__pycache__/
+.venv/
+docs
+
+results/*.csv
+logs/*.log
+
+__*

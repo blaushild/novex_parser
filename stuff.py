@@ -1,20 +1,10 @@
 """Supporting funcs"""
 import logging
 import logging.config
-import os
 import random
 from time import time, sleep
 from typing import Union, Callable
 
-
-def create_directories(directories: list[str]) -> None:
-    """Создает директории, если не существуют"""
-    for directory in directories:
-        if not os.path.exists(directory):
-            os.makedirs(directory)
-
-
-create_directories(["logs/"])  # создаёт директории для сохранения
 
 logging.config.fileConfig("logging.conf")
 logger = logging.getLogger(__name__)
