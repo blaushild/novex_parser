@@ -33,7 +33,6 @@ def prepare_string(text: str) -> str:
     escaped_text = replaced_text.replace('"', '""')
 
     # Оборачивание текстового поля в кавычки
-
     final_text = f'"{escaped_text}"'
 
     return final_text
