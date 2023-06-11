@@ -121,13 +121,8 @@ def get_time_to_sleep(time_range: Union[list[int], int]) -> int:
 
 def sleep_between_requests(time_range: Union[list[int], int]) -> None:
     """Делает паузу между запросами"""
-    if time_range == 0:
-        return
 
-    if isinstance(time_range, (int, float)):
-        time_to_sleep = time_range
-    else:
-        time_to_sleep = get_time_to_sleep(time_range)
-
-    logger.info(f"Sleep {time_to_sleep} seconds.")
-    sleep(time_to_sleep)
+    time_to_sleep = get_time_to_sleep(time_range)
+    if time_to_sleep:
+        logger.info(f"Sleep {time_to_sleep} seconds.")
+        sleep(time_to_sleep)
