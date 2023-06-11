@@ -20,6 +20,7 @@ from stuff import (
     sleep_between_requests,
     timer,
     request_repeater,
+    restarter,
 )
 
 
@@ -175,7 +176,76 @@ class TestRequestRepeaterDecorator(unittest.TestCase):
 
         self.assertFalse(result)
         mock_logger_error.assert_called_with("Exception in: func: Something went wrong")
-        
+
+
+class TestRestarterDecorator(unittest.TestCase):
+    def test_restart_function_successfully(self):
+        class DummyObject:
+            config = {
+                "restart": {
+                    "restart_interval_min": 1,
+                    "restart_count": 20
+                }
+            }
+
+            def __init__(self):
+                self.counter = 0
+
+            @restarter
+            def func(self):
+                self.counter += 1
+                if self.counter <= 9:
+                    raise ValueError("TestError")
+                return True
+
+        obj = DummyObject()
+
+        with patch('stuff.sleep_between_requests', return_value=0), \
+             patch('stuff.logger.critical') as mock_logger_critical, \
+             patch('stuff.logger.info') as mock_logger_info:
+
+            result = obj.func()
+
+        self.assertFalse(result)
+        self.assertEqual(
+            mock_logger_critical.call_count,
+            obj.config["restart"]["restart_count"]
+        )
+        self.assertEqual(
+            mock_logger_info.call_count,
+            obj.config["restart"]["restart_count"] - 1
+        )
+
+    def test_restart_function_max_restarts_exceeded(self):
+        class DummyObject:
+            config = {
+                "restart": {
+                    "restart_interval_min": 1,
+                    "restart_count": 20
+                }
+            }
+
+            def __init__(self):
+                self.counter = 0
+
+            @restarter
+            def func(self):
+                self.counter += 1
+                raise ValueError("TestError")
+
+        obj = DummyObject()
+
+        with patch('stuff.sleep_between_requests', return_value=0), \
+             patch('stuff.logger.critical') as mock_logger_critical:
+
+            result = obj.func()
+
+        self.assertFalse(result)
+        self.assertEqual(
+            mock_logger_critical.call_count, 
+            obj.config["restart"]["restart_count"],
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
