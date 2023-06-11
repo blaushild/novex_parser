@@ -75,7 +75,7 @@ def request_repeater(func: Callable) -> Callable:
             # с какого повтора начинаем показывать номер попытки
             elif starts > 1:
                 if time_range == 0:
-                    time_range = [1, 1]
+                    time_range = [0, 0]
                 time_to_sleep = calculate_delay(
                     starts, time_range[1], backoff_factor
                 )
