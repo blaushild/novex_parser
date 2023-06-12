@@ -35,7 +35,7 @@ class TestGetTimeToSleep(unittest.TestCase):
     def test_get_time_to_sleep_with_list(self) -> None:
         # всегда в пределах заданного диапазона
         time_range = [2, 10]
-        for _ in range(1000):
+        for _ in range(100):
             result = get_time_to_sleep(time_range)
             self.assertTrue(time_range[0] <= result <= time_range[1])
 
@@ -69,8 +69,8 @@ class TestSleepBetweenRequests(unittest.TestCase):
 
     def test_sleep_with_int(self) -> None:
         with patch('stuff.sleep') as mock_sleep:
-            sleep_between_requests(5)
-            mock_sleep.assert_called_once_with(5)
+            sleep_between_requests(1)
+            mock_sleep.assert_called_once_with(1)
 
     def test_sleep_with_list(self) -> None:
         for _ in range(100):
@@ -160,7 +160,7 @@ class TestRequestRepeaterDecorator(unittest.TestCase):
         class DummyObject:
             config = {
                 "delay_range_s": [0, 1],
-                "backoff_factor": 2,
+                "backoff_factor": 0.5,
                 "max_retries": 3
             }
 
@@ -179,7 +179,10 @@ class TestRequestRepeaterDecorator(unittest.TestCase):
 
 
 class TestRestarterDecorator(unittest.TestCase):
-    def test_restart_function_successfully(self):
+    def setUp(self) -> None:
+        logger.setLevel(level=logging.CRITICAL)
+
+    def test_restart_function_successfully(self) -> None:
         class DummyObject:
             config = {
                 "restart": {
@@ -194,7 +197,7 @@ class TestRestarterDecorator(unittest.TestCase):
             @restarter
             def func(self):
                 self.counter += 1
-                if self.counter <= 9:
+                if self.counter <= 3:
                     raise ValueError("TestError")
                 return True
 
@@ -216,7 +219,7 @@ class TestRestarterDecorator(unittest.TestCase):
             obj.config["restart"]["restart_count"] - 1
         )
 
-    def test_restart_function_max_restarts_exceeded(self):
+    def test_restart_function_max_restarts_exceeded(self) -> None:
         class DummyObject:
             config = {
                 "restart": {

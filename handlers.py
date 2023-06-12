@@ -12,10 +12,13 @@ def build_sku_category(product: dict) -> str:
         parent = product["categories"][0]["parent"]
         while True:
             sku_category = parent["title"] + "|" + sku_category
-            if not parent["parent"]:
+
+            if "parent" not in parent or not parent["parent"]:
                 return sku_category
 
             parent = parent["parent"]
+    else:
+        return sku_category
 
 
 def prepare_string(text: str) -> str:

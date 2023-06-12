@@ -18,27 +18,6 @@ def calculate_delay(
     return (initial_delay + initial_delay * increase_factor) ** (restarts - 1)
 
 
-def get_time_to_sleep(time_range: Union[list[int], int]) -> int:
-    """Выбирает время сна перед очередным запросом"""
-    if isinstance(time_range, list) and len(time_range) == 2:
-        min_seconds, max_seconds = time_range
-        return random.randint(min_seconds, max_seconds)
-    elif isinstance(time_range, int):
-        return time_range
-    raise TypeError(
-        f"time_range must be list of 2 elements or int. {type(time_range)=}"
-    )
-
-
-def sleep_between_requests(time_range: Union[list[int], int]) -> None:
-    """Делает паузу между запросами"""
-
-    time_to_sleep = get_time_to_sleep(time_range)
-    if time_to_sleep:
-        logger.info(f"Sleep {time_to_sleep} seconds.")
-        sleep(time_to_sleep)
-
-
 def timer(func: Callable) -> Callable:
     """Декоратор. Измеряет время работы функции"""
 
@@ -75,7 +54,7 @@ def request_repeater(func: Callable) -> Callable:
             # с какого повтора начинаем показывать номер попытки
             elif starts > 1:
                 if time_range == 0:
-                    time_range = [0, 0]
+                    time_range = [1, 1]
                 time_to_sleep = calculate_delay(
                     starts, time_range[1], backoff_factor
                 )
@@ -126,3 +105,29 @@ def restarter(func: Callable) -> Callable:
                 logger.error(f"Exception in: {func.__name__}: {e}")
 
     return wrapper
+
+
+def get_time_to_sleep(time_range: Union[list[int], int]) -> int:
+    """Выбирает время сна перед очередным запросом"""
+    if isinstance(time_range, list) and len(time_range) == 2:
+        min_seconds, max_seconds = time_range
+        return random.randint(min_seconds, max_seconds)
+    elif isinstance(time_range, int):
+        return time_range
+    raise TypeError(
+        f"time_range must be list of 2 elements or int. {type(time_range)=}"
+    )
+
+
+def sleep_between_requests(time_range: Union[list[int], int]) -> None:
+    """Делает паузу между запросами"""
+    if time_range == 0:
+        return
+
+    if isinstance(time_range, (int, float)):
+        time_to_sleep = time_range
+    else:
+        time_to_sleep = get_time_to_sleep(time_range)
+
+    logger.info(f"Sleep {time_to_sleep} seconds.")
+    sleep(time_to_sleep)
