@@ -50,7 +50,6 @@ class Parser:
         self.processed_products = []
         self.data_to_save = []  # данные, подготовленные для сохранения в CSV
 
-        self.max_threads = self.config["max_threads"]
         self.lock = threading.Lock()
         self.threads = []
 
@@ -397,7 +396,7 @@ class Parser:
         Функция должна иметь обеспечение синхронизации
         доступа к общим ресурсам.
         """
-        for _ in range(self.max_threads):
+        for _ in range(self.config["max_threads"]):
             thread = threading.Thread(target=func)
             thread.start()
             self.threads.append(thread)
@@ -430,12 +429,17 @@ class Parser:
         # продукты из которых будут в результатах
         self._save_to_csv(CATEGORIES_TO_PARSE)
 
+        # парсим продукты из категорий self.categories_to_parse
+        # в моногопоточном режиме. на каждую категорию 1 поток
         logger.info("Products mining is starting.")
         self.start_multithreading(self._get_products_thread)
 
         # отфильтровываем продукты из категорий в blacklist'е
         self._filter_products()
 
+        # обогощаем данные о товаре. Многопочный режим.
+        # Каждый товар в своём потоке. Кол-во запросов = 
+        # кол-во отфильтрованных товаров
         logger.info(
             "Products enrich is starting for "
             + f"{len(self.filtered_products)} products."
