@@ -3,7 +3,6 @@ import os
 import logging
 import unittest
 from unittest.mock import patch
-from unittest.mock import MagicMock
 from time import sleep
 from typing import Any
 

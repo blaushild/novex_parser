@@ -5,8 +5,7 @@ import csv
 from datetime import datetime
 from typing import Callable
 
-from handlers import build_sku_category
-from handlers import prepare_row
+from handlers import build_sku_category, prepare_row
 
 from stuff import (
     logger,
@@ -152,7 +151,6 @@ class Parser:
         """
         for product in self.products:
             is_blacklisted = self.filter_product(product)
-            logger.debug(f"{is_blacklisted=}")
             if is_blacklisted:
                 logger.debug(f"Black listed: {product['slug']}")
             else:
