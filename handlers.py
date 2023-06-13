@@ -35,10 +35,7 @@ def prepare_string(text: str) -> str:
     # Экранирование кавычек внутри текстовых полей
     escaped_text = replaced_text.replace('"', '""')
 
-    # Оборачивание текстового поля в кавычки
-    final_text = f'"{escaped_text}"'
-
-    return final_text
+    return escaped_text
 
 
 def prepare_row(row: list[str]) -> list:

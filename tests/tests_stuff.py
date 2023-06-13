@@ -41,7 +41,7 @@ class TestGetTimeToSleep(unittest.TestCase):
         # результат всегда равен входному значению, если на входе int
         self.assertEqual(get_time_to_sleep(0), 0)
         self.assertEqual(get_time_to_sleep(65), 65)
-    
+
     def test_get_time_to_sleep_returns_int(self) -> None:
         self.assertIsInstance(get_time_to_sleep([3, 5]), int)
         self.assertIsInstance(get_time_to_sleep(95), int)
@@ -67,13 +67,13 @@ class TestSleepBetweenRequests(unittest.TestCase):
         logger.setLevel(level=logging.WARNING)
 
     def test_sleep_with_int(self) -> None:
-        with patch('stuff.sleep') as mock_sleep:
+        with patch("stuff.sleep") as mock_sleep:
             sleep_between_requests(1)
             mock_sleep.assert_called_once_with(1)
 
     def test_sleep_with_list(self) -> None:
         for _ in range(100):
-            with patch('stuff.sleep') as mock_sleep:
+            with patch("stuff.sleep") as mock_sleep:
                 time_range = [3, 5]
                 sleep_between_requests(time_range)
 
@@ -83,7 +83,7 @@ class TestSleepBetweenRequests(unittest.TestCase):
                 self.assertTrue(time_range[0] <= sleep_time <= time_range[1])
 
     def test_sleep_with_empty_zero(self) -> None:
-        with patch('stuff.sleep') as mock_sleep:
+        with patch("stuff.sleep") as mock_sleep:
             sleep_between_requests(0)
             mock_sleep.assert_not_called()
 
@@ -98,7 +98,7 @@ class TestTimerDecorator(unittest.TestCase):
             sleep(1)
 
         # Захватываем вывод логгера для проверки времени выполнения
-        with self.assertLogs(level='INFO') as logs:
+        with self.assertLogs(level="INFO") as logs:
             func()
 
         # Проверяем, что сообщение логгера содержит время выполнения
@@ -116,7 +116,7 @@ class TestRequestRepeaterDecorator(unittest.TestCase):
             config = {
                 "delay_range_s": [0, 1],
                 "backoff_factor": 2,
-                "max_retries": 3
+                "max_retries": 3,
             }
 
             @request_repeater
@@ -125,7 +125,7 @@ class TestRequestRepeaterDecorator(unittest.TestCase):
 
         obj = DummyObject()
 
-        with patch('stuff.get_time_to_sleep', return_value=0):
+        with patch("stuff.get_time_to_sleep", return_value=0):
             result = obj.func()
 
         self.assertEqual(result, 89)
@@ -135,7 +135,7 @@ class TestRequestRepeaterDecorator(unittest.TestCase):
             config = {
                 "delay_range_s": [0, 1],
                 "backoff_factor": 2,
-                "max_retries": 3
+                "max_retries": 3,
             }
 
             @request_repeater
@@ -146,10 +146,9 @@ class TestRequestRepeaterDecorator(unittest.TestCase):
 
         obj = DummyObject()
 
-        with patch('stuff.sleep_between_requests', return_value=0), \
-             patch('stuff.get_time_to_sleep', return_value=0), \
-             patch('stuff.logger.info') as mock_logger_info:
-            
+        with patch("stuff.sleep_between_requests", return_value=0), \
+                patch("stuff.get_time_to_sleep", return_value=0), \
+                patch("stuff.logger.info") as mock_logger_info:
             result = obj.func()
 
         self.assertFalse(result)
@@ -160,7 +159,7 @@ class TestRequestRepeaterDecorator(unittest.TestCase):
             config = {
                 "delay_range_s": [0, 1],
                 "backoff_factor": 0.5,
-                "max_retries": 3
+                "max_retries": 3,
             }
 
             @request_repeater
@@ -169,12 +168,14 @@ class TestRequestRepeaterDecorator(unittest.TestCase):
 
         obj = DummyObject()
 
-        with patch('stuff.get_time_to_sleep', return_value=0), \
-             patch('stuff.logger.error') as mock_logger_error:
+        with patch("stuff.get_time_to_sleep", return_value=0), \
+                patch("stuff.logger.error") as mock_logger_error:
             result = obj.func()
 
         self.assertFalse(result)
-        mock_logger_error.assert_called_with("Exception in: func: Something went wrong")
+        mock_logger_error.assert_called_with(
+            "Exception in: func: Something went wrong"
+        )
 
 
 class TestRestarterDecorator(unittest.TestCase):
@@ -184,10 +185,7 @@ class TestRestarterDecorator(unittest.TestCase):
     def test_restart_function_successfully(self) -> None:
         class DummyObject:
             config = {
-                "restart": {
-                    "restart_interval_min": 1,
-                    "restart_count": 20
-                }
+                "restart": {"restart_interval_min": 1, "restart_count": 20}
             }
 
             def __init__(self):
@@ -202,29 +200,25 @@ class TestRestarterDecorator(unittest.TestCase):
 
         obj = DummyObject()
 
-        with patch('stuff.sleep_between_requests', return_value=0), \
-             patch('stuff.logger.critical') as mock_logger_critical, \
-             patch('stuff.logger.info') as mock_logger_info:
-
+        with patch("stuff.sleep_between_requests", return_value=0), \
+                patch("stuff.logger.critical") as mock_logger_critical, \
+                patch("stuff.logger.info") as mock_logger_info:
             result = obj.func()
 
         self.assertFalse(result)
         self.assertEqual(
             mock_logger_critical.call_count,
-            obj.config["restart"]["restart_count"]
+            obj.config["restart"]["restart_count"],
         )
         self.assertEqual(
             mock_logger_info.call_count,
-            obj.config["restart"]["restart_count"] - 1
+            obj.config["restart"]["restart_count"] - 1,
         )
 
     def test_restart_function_max_restarts_exceeded(self) -> None:
         class DummyObject:
             config = {
-                "restart": {
-                    "restart_interval_min": 1,
-                    "restart_count": 20
-                }
+                "restart": {"restart_interval_min": 1, "restart_count": 20}
             }
 
             def __init__(self):
@@ -237,17 +231,16 @@ class TestRestarterDecorator(unittest.TestCase):
 
         obj = DummyObject()
 
-        with patch('stuff.sleep_between_requests', return_value=0), \
-             patch('stuff.logger.critical') as mock_logger_critical:
-
+        with patch("stuff.sleep_between_requests", return_value=0), \
+                patch("stuff.logger.critical") as mock_logger_critical:
             result = obj.func()
 
         self.assertFalse(result)
         self.assertEqual(
-            mock_logger_critical.call_count, 
+            mock_logger_critical.call_count,
             obj.config["restart"]["restart_count"],
         )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -170,6 +170,12 @@ class Parser:
 
         return self.fetch_json_data(url)
 
+    def __add_receiving_time(self, response: dict) -> dict:
+        """записывает время получения данных о продукте в items"""
+        for item in response["items"]:
+            item["receiving_time"] = datetime.now()
+        return response
+
     def _get_products_thread(self) -> None:
         """
         Получаем продукты из категорий categories.
@@ -222,6 +228,8 @@ class Parser:
                 )
                 logger.debug(f"{url=}")
                 response = self.fetch_json_data(url)
+
+                response = self.__add_receiving_time(response)
 
                 self.products.extend(response["items"])
 
@@ -335,7 +343,7 @@ class Parser:
         sku_country = product["country"] if "country" in product else None
 
         product = [
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            product["receiving_time"].strftime("%Y-%m-%d %H:%M:%S"),
             float(product["price"]["basePrice"]),
             float(product["price"]["price"]),
             sku_status,
