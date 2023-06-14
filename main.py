@@ -33,6 +33,10 @@ PRODUCTS_ENDPOINT = CATALOG_URL + "products"
 class Parser:
     def __init__(self):
         self.config = self.__get_settings_from_config()
+
+        if self.config["categories"] == ["/"]:
+            self.config["categories"] = []
+
         self.config["categories"] = [
             c.replace("/", "") for c in self.config["categories"]
         ]
@@ -44,9 +48,7 @@ class Parser:
         # список всех slug категорий для парсинга
         self.categories_to_parse = []
         self.products = []  # спаршенные продукты
-        # почищенные от продуктов, входящих в категории в black_list
-        self.filtered_products = []
-        self.processed_products = []
+        self.enriched_products = []  # обогощённые продукты
         self.data_to_save = []  # данные, подготовленные для сохранения в CSV
 
         self.lock = threading.Lock()
@@ -90,72 +92,30 @@ class Parser:
 
         self.all_categories = response.json()
 
-    def _filter_category(self, category: dict) -> bool:
-        """Фильтруем только нужные категории"""
-        if category["slug"] in self.config["categories"]:
-            self.categories_to_parse.append(category)
-            return True
-
-    def _parse_category(self, category: dict) -> None:
+    def _parse_category(self, category: dict, approved=False) -> None:
         """Проход по категории рекурсивно в случае прохода фильтра добавляет
         в список категорий для парсинга
         """
-        if not self.config["categories"]:
-            self.categories_to_parse.append(category)
+        if category["slug"] in self.config["categories_black_list"]:
             return
 
-        if self._filter_category(category):
-            return
+        if (
+            category["slug"] in self.config["categories"]
+            or not self.config["categories"]
+        ):
+            approved = True
 
         if "children" in category:
             for child in category["children"]:
-                self._parse_category(child)
+                self._parse_category(child, approved)
+
+        if approved and "children" not in category:
+            self.categories_to_parse.append(category)
 
     def _bypass_categories(self) -> None:
         """Обходит все корневые категории"""
         for category in self.all_categories:
             self._parse_category(category)
-
-    def filter_product(self, product: dict) -> bool:
-        """рекурсивный обход всех предков товара(категорий).
-        если один из предков в blacklist,
-        то товар не попадает в filtered_products
-        """
-        if "categories" in product and any(
-            category["slug"] in self.config["categories_black_list"]
-            for category in product["categories"]
-        ):
-            return True
-
-        if "categories" in product:
-            return self.filter_product(product["categories"][0]["parent"])
-
-        if "slug" in product:
-            logger.debug(f"{product['slug']=}")
-
-        if (
-            "slug" in product
-            and product["slug"] in self.config["categories_black_list"]
-        ):
-            logger.debug(f"Catched {product['slug']=}")
-            return True
-
-        if "parent" in product and product["parent"]:
-            return self.filter_product(product["parent"])
-
-        return False
-
-    def _filter_products(self) -> None:
-        """Чистим от продуктов, находящихся в категориях из
-        categories_black_list
-        """
-        for product in self.products:
-            is_blacklisted = self.filter_product(product)
-            if is_blacklisted:
-                logger.debug(f"Black listed: {product['slug']}")
-            else:
-                self.filtered_products.append(product)
-                logger.debug(f"Added to filtered_products: {product['slug']}")
 
     def get_product_info(self, product: dict) -> dict:
         """Получает инфу о продукте"""
@@ -235,10 +195,12 @@ class Parser:
 
                 if page == 1:
                     logger.info(
-                        f"Total items: {response['pagination']['total']}"
+                        f"[{category['slug']}] "
+                        + f"Total items: {response['pagination']['total']}"
                     )
                     logger.info(
-                        f"Total pages: {response['pagination']['pages']}"
+                        f"[{category['slug']}] "
+                        + f"Total pages: {response['pagination']['pages']}"
                     )
 
                 if (
@@ -267,23 +229,21 @@ class Parser:
                 )
                 break
 
-        self.processed_products.append(product)
+        self.enriched_products.append(product)
 
     def _enrich_products_thread(self) -> None:
         """Отдельный поток обогощения данных о продукте"""
         while True:
             self.lock.acquire()
-            if not self.filtered_products:
+            if not self.products:
                 self.lock.release()
                 break
-            product = self.filtered_products.pop(0)
+            product = self.products.pop(0)
             self.lock.release()
 
             self._enrich_product(product)
 
-    def _create_categories_for_csv(
-        self, categories: list, respect_black_list: bool = True
-    ) -> None:
+    def _create_categories_for_csv(self, categories: list) -> None:
         """Подготавливает данные для заданных категорий перед записью в файл.
         рекурсивно обходит все подкатегории.
         """
@@ -293,12 +253,6 @@ class Parser:
             )
 
         for category in categories:
-            if (
-                respect_black_list
-                and category["slug"] in self.config["categories_black_list"]
-            ):
-                continue
-
             row = []
             row.append(category["id"])  # original_id
             row.append(category["title"])  # name
@@ -418,21 +372,16 @@ class Parser:
 
         self._get_categories()  # получает все каталоги и подкаталоги, 1 запрос
 
-        # обход полученного дерева категорий для получения категорий,
-        # которые будут парситься.
-        # сделано на случай категории в целях парсинга в конфиге и
-        # отсутствия в источнике
+        # обход полученного дерева категорий для получения категорий самого
+        # нижнего уровня, которые и будут парситься.
         self._bypass_categories()
 
-        self._create_categories_for_csv(
-            self.all_categories, respect_black_list=False
-        )
+        self._create_categories_for_csv(self.all_categories)
         self._save_to_csv(STRUCTURE_FILE)  # сохраняет полный список категорий
         self.data_to_save = []
 
         self._create_categories_for_csv(self.categories_to_parse)
-        # сохраняет категории для, категории,
-        # продукты из которых будут в результатах
+        # сохраняет категории, продукты из которых будут в результатах
         self._save_to_csv(CATEGORIES_TO_PARSE)
 
         # парсим продукты из категорий self.categories_to_parse
@@ -440,23 +389,22 @@ class Parser:
         logger.info("Products mining is starting.")
         self.start_multithreading(self._get_products_thread)
 
-        # отфильтровываем продукты из категорий в blacklist'е
-        self._filter_products()
-
         # обогощаем данные о товаре. Многопочный режим.
         # Каждый товар в своём потоке. Кол-во запросов =
         # кол-во отфильтрованных товаров
         logger.info(
             "Products enrich is starting for "
-            + f"{len(self.filtered_products)} products."
+            + f"{len(self.products)} products."
         )
         self.start_multithreading(self._enrich_products_thread)
 
-        self._prepare_products_for_csv(self.processed_products)
+        self._prepare_products_for_csv(self.enriched_products)
         self._save_to_csv(PRODUCTS_FILE)
 
         logger.info("Parsing successfully finished.")
-        logger.info(f"Parsed {len(self.data_to_save)} products.")
+
+        # first row of CSV has headers of columns
+        logger.info(f"Parsed {len(self.data_to_save) - 1} products.")
 
 
 @timer
